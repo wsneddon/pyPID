@@ -7,7 +7,6 @@ import time
 from enum import Enum
 
 from .alarms import AlarmConfig, AlarmState, evaluate_alarms
-from .scaling import Scaler
 
 
 class Mode(Enum):
@@ -58,8 +57,6 @@ class PID:
         Function returning current time. Default: time.monotonic.
     starting_output : float
         Initial output / bias value.
-    scaler : Scaler or None
-        Optional engineering units scaler for the PV input.
     alarm_config : AlarmConfig or None
         Optional alarm configuration.
     """
@@ -77,7 +74,6 @@ class PID:
         differential_on_measurement=True,
         time_fn=None,
         starting_output=0.0,
-        scaler=None,
         alarm_config=None,
     ):
         self.Kp = Kp
@@ -88,9 +84,6 @@ class PID:
         self.reverse_acting = reverse_acting
         self.proportional_on_measurement = proportional_on_measurement
         self.differential_on_measurement = differential_on_measurement
-
-        # Scaling
-        self.scaler = scaler
 
         # Alarms
         self.alarm_config = alarm_config
@@ -136,7 +129,7 @@ class PID:
         Parameters
         ----------
         input_ : float
-            Current process variable (raw or scaled depending on scaler config).
+            Current process variable in engineering units.
         dt : float or None
             Time step override. If None, uses real elapsed time.
 
@@ -145,8 +138,8 @@ class PID:
         float
             Controller output.
         """
-        # Apply scaling if configured
-        pv = self.scaler.to_eu(input_) if self.scaler is not None else input_
+        # PV is already in engineering units (scaling done externally)
+        pv = input_
 
         # Evaluate alarms against PV
         active_sp = self._get_active_setpoint()

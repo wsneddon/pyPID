@@ -7,7 +7,7 @@ An enhanced PID controller for Python, forked from [simple-pid](https://github.c
 - **Operating Modes**: Manual, Auto, and Cascade with bumpless transfer
 - **Reverse Acting**: Configurable error direction (SP-PV or PV-SP)
 - **Bias Term**: Externally writable bias with proper mode transition handling
-- **Engineering Units Scaling**: Optional raw-to-EU conversion on inputs
+- **Engineering Units Scaling**: Separate Scaler module for A/D count-to-EU conversion
 - **Alarms**: Configurable high/low alarm setpoints with boolean outputs
 - **FOPDT Simulation**: Decoupled First Order Plus Dead Time simulator for testing
 - **Optional Scheduler**: Threaded execution for real-time applications
@@ -36,6 +36,24 @@ for i in range(500):
     print(f"t={i*0.1:.1f}  PV={pv:.2f}  OUT={output:.2f}")
 ```
 
+## Scaling (I/O Layer)
+
+Scaling is handled separately from the PID — convert raw A/D counts to engineering
+units before passing to the controller. This mirrors how real DCS/PLC systems work.
+
+```python
+from pypid import Scaler
+
+# Default: 6400 counts (4mA) to 32000 counts (20mA)
+scaler = Scaler(eu_lo=0.0, eu_hi=200.0)  # 0-200°F
+
+raw_counts = 19200  # from your A/D card
+pv = scaler.to_eu(raw_counts)  # → 100.0°F
+
+# Custom A/D range
+scaler = Scaler(raw_lo=0, raw_hi=65535, eu_lo=-40.0, eu_hi=300.0)
+```
+
 ## Modes
 
 ```python
@@ -53,6 +71,19 @@ pid.mode = Mode.AUTO
 # Cascade mode - uses remote setpoint
 pid.mode = Mode.CASCADE
 pid.remote_setpoint = 55.0
+```
+
+## Alarms
+
+```python
+from pypid import PID, AlarmConfig
+
+alarms = AlarmConfig(hsp=80.0, hhsp=90.0, lsp=20.0, llsp=10.0, yeldev_sp=5.0)
+pid = PID(Kp=1.0, Ki=0.1, setpoint=50.0, alarm_config=alarms)
+
+pid(85.0, dt=0.1)
+print(pid.alarms.h)    # True — PV > hsp
+print(pid.alarms.hh)   # False — PV < hhsp
 ```
 
 ## License

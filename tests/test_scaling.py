@@ -88,29 +88,30 @@ class TestScaler:
 
 
 class TestScalerInPID:
-    """Test scaler integrated with PID — PV as raw counts."""
+    """Test scaler used externally before passing PV to PID."""
 
-    def test_pid_with_count_input(self):
-        """Feed raw A/D counts to PID, it should scale internally."""
-        scaler = Scaler(eu_lo=0.0, eu_hi=100.0)  # 6400-32000 -> 0-100
-        pid = PID(Kp=1.0, Ki=0.0, Kd=0.0, setpoint=50.0,
-                  scaler=scaler, sample_time=None)
+    def test_scaled_input_to_pid(self):
+        """Scale counts to EU externally, then feed to PID."""
+        scaler = Scaler(eu_lo=0.0, eu_hi=100.0)
+        pid = PID(Kp=1.0, Ki=0.0, Kd=0.0, setpoint=50.0, sample_time=None)
         # 19200 counts = 50 EU = setpoint, error should be 0
-        output = pid(19200, dt=1.0)
+        pv = scaler.to_eu(19200)
+        output = pid(pv, dt=1.0)
         assert output == pytest.approx(0.0)
 
     def test_pid_pv_property_shows_eu(self):
-        """pid.pv should show the scaled EU value, not raw counts."""
+        """pid.pv shows the EU value passed in."""
         scaler = Scaler(eu_lo=0.0, eu_hi=200.0)
-        pid = PID(Kp=1.0, setpoint=100.0, scaler=scaler, sample_time=None)
-        pid(19200, dt=1.0)  # 19200 counts = 100 EU
+        pid = PID(Kp=1.0, setpoint=100.0, sample_time=None)
+        pv = scaler.to_eu(19200)  # 19200 counts = 100 EU
+        pid(pv, dt=1.0)
         assert pid.pv == pytest.approx(100.0)
 
     def test_pid_error_from_eu(self):
-        """PID should compute error in EU, not counts."""
+        """PID computes error in EU after external scaling."""
         scaler = Scaler(eu_lo=0.0, eu_hi=100.0)
-        pid = PID(Kp=2.0, Ki=0.0, Kd=0.0, setpoint=75.0,
-                  scaler=scaler, sample_time=None)
+        pid = PID(Kp=2.0, Ki=0.0, Kd=0.0, setpoint=75.0, sample_time=None)
         # 19200 counts = 50 EU, error = 75 - 50 = 25, output = 2 * 25 = 50
-        output = pid(19200, dt=1.0)
+        pv = scaler.to_eu(19200)
+        output = pid(pv, dt=1.0)
         assert output == pytest.approx(50.0)
