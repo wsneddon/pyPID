@@ -52,7 +52,8 @@ class FOPDTSimulator:
 
         # Dead time buffer: stores (time_available, input_value) tuples
         self._delay_buffer = deque()
-        self._current_input = 0.0
+        # Initialize current input to maintain steady state: K * u = y0
+        self._current_input = y0 / K if K != 0 else 0.0
         self._last_time = None
         self._total_time = 0.0
 
@@ -111,7 +112,7 @@ class FOPDTSimulator:
         else:
             self.y = self._y0
         self._delay_buffer.clear()
-        self._current_input = 0.0
+        self._current_input = self._y0 / self.K if self.K != 0 else 0.0
         self._last_time = None
         self._total_time = 0.0
 
