@@ -96,14 +96,14 @@ class TestAlarmsInPID:
 
     def test_alarms_evaluated_on_call(self):
         config = AlarmConfig(hsp=60.0, lsp=20.0)
-        pid = PID(Kp=1.0, setpoint=50.0, alarm_config=config, sample_time=None)
+        pid = PID(Kc=1.0, setpoint=50.0, alarm_config=config, sample_time=None)
         pid(70.0, dt=1.0)
         assert pid.alarms.h is True
         assert pid.alarms.l is False
 
     def test_alarms_update_each_scan(self):
         config = AlarmConfig(hsp=60.0)
-        pid = PID(Kp=1.0, setpoint=50.0, alarm_config=config, sample_time=None)
+        pid = PID(Kc=1.0, setpoint=50.0, alarm_config=config, sample_time=None)
         pid(70.0, dt=1.0)
         assert pid.alarms.h is True
         pid(55.0, dt=1.0)

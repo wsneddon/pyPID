@@ -24,8 +24,8 @@ pip install -e .
 ```python
 from pypid import PID, FOPDTSimulator
 
-# Create controller and simulator
-pid = PID(Kp=1.2, Ki=0.5, Kd=0.1, setpoint=50.0, output_limits=(0, 100))
+# Create controller and simulator (coupled ISA form)
+pid = PID(Kc=1.2, Ti=10.0, Td=2.0, setpoint=50.0, output_limits=(0, 100))
 sim = FOPDTSimulator(K=2.0, tau=10.0, theta=2.0)
 
 # Run a control loop
@@ -59,7 +59,7 @@ scaler = Scaler(raw_lo=0, raw_hi=65535, eu_lo=-40.0, eu_hi=300.0)
 ```python
 from pypid import PID, Mode
 
-pid = PID(Kp=1.0, Ki=0.1, Kd=0.0, setpoint=50.0)
+pid = PID(Kc=1.0, Ti=10.0, Td=0.0, setpoint=50.0)
 
 # Manual mode - output is writable
 pid.mode = Mode.MANUAL
@@ -79,7 +79,7 @@ pid.remote_setpoint = 55.0
 from pypid import PID, AlarmConfig
 
 alarms = AlarmConfig(hsp=80.0, hhsp=90.0, lsp=20.0, llsp=10.0, yeldev_sp=5.0)
-pid = PID(Kp=1.0, Ki=0.1, setpoint=50.0, alarm_config=alarms)
+pid = PID(Kc=1.0, Ti=10.0, setpoint=50.0, alarm_config=alarms)
 
 pid(85.0, dt=0.1)
 print(pid.alarms.h)    # True — PV > hsp

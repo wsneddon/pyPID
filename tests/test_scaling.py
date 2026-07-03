@@ -93,7 +93,7 @@ class TestScalerInPID:
     def test_scaled_input_to_pid(self):
         """Scale counts to EU externally, then feed to PID."""
         scaler = Scaler(eu_lo=0.0, eu_hi=100.0)
-        pid = PID(Kp=1.0, Ki=0.0, Kd=0.0, setpoint=50.0, sample_time=None)
+        pid = PID(Kc=1.0, Ti=None, Td=None, setpoint=50.0, sample_time=None)
         # 19200 counts = 50 EU = setpoint, error should be 0
         pv = scaler.to_eu(19200)
         output = pid(pv, dt=1.0)
@@ -102,7 +102,7 @@ class TestScalerInPID:
     def test_pid_pv_property_shows_eu(self):
         """pid.pv shows the EU value passed in."""
         scaler = Scaler(eu_lo=0.0, eu_hi=200.0)
-        pid = PID(Kp=1.0, setpoint=100.0, sample_time=None)
+        pid = PID(Kc=1.0, setpoint=100.0, sample_time=None)
         pv = scaler.to_eu(19200)  # 19200 counts = 100 EU
         pid(pv, dt=1.0)
         assert pid.pv == pytest.approx(100.0)
@@ -110,8 +110,8 @@ class TestScalerInPID:
     def test_pid_error_from_eu(self):
         """PID computes error in EU after external scaling."""
         scaler = Scaler(eu_lo=0.0, eu_hi=100.0)
-        pid = PID(Kp=2.0, Ki=0.0, Kd=0.0, setpoint=75.0, sample_time=None)
-        # 19200 counts = 50 EU, error = 75 - 50 = 25, output = 2 * 25 = 50
+        pid = PID(Kc=2.0, Ti=None, Td=None, setpoint=75.0, sample_time=None)
+        # 19200 counts = 50 EU, error = 75 - 50 = 25, output = Kc * 25 = 50
         pv = scaler.to_eu(19200)
         output = pid(pv, dt=1.0)
         assert output == pytest.approx(50.0)

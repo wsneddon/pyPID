@@ -1,5 +1,12 @@
 """Enhanced PID controller with operating modes, bias, reverse acting, and alarms.
 
+Uses the classic coupled (ISA/standard) form:
+
+    output = Kc * [error + (1/Ti) * ∫error*dt + Td * d(error)/dt]
+
+Where Kc (controller gain) multiplies all three terms. Changing Kc scales
+the entire controller response — matching how DCS/PLC controllers behave.
+
 Based on simple-pid by Martin Lundberg (https://github.com/m-lundberg/simple-pid).
 """
 
@@ -30,16 +37,27 @@ def _clamp(value, limits):
 
 
 class PID:
-    """Enhanced PID controller.
+    """Enhanced PID controller using the coupled (ISA/standard) form.
+
+    The control equation is:
+
+        output = Kc * [error + (1/Ti) * ∫error*dt + Td * d(error)/dt]
+
+    Where:
+        Kc = controller gain (dimensionless, affects all terms)
+        Ti = integral time (seconds). Larger Ti = slower integral action.
+             Ti=0 or None disables integral action.
+        Td = derivative time (seconds). Larger Td = more derivative action.
+             Td=0 or None disables derivative action.
 
     Parameters
     ----------
-    Kp : float
-        Proportional gain.
-    Ki : float
-        Integral gain.
-    Kd : float
-        Derivative gain.
+    Kc : float
+        Controller gain. Multiplies all three terms (P, I, D).
+    Ti : float or None
+        Integral time in seconds (repeats/second). None or 0 disables integral.
+    Td : float or None
+        Derivative time in seconds. None or 0 disables derivative.
     setpoint : float
         Target setpoint for Auto mode.
     sample_time : float or None
@@ -63,9 +81,9 @@ class PID:
 
     def __init__(
         self,
-        Kp=1.0,
-        Ki=0.0,
-        Kd=0.0,
+        Kc=1.0,
+        Ti=None,
+        Td=None,
         setpoint=0.0,
         sample_time=0.01,
         output_limits=(None, None),
@@ -76,9 +94,9 @@ class PID:
         starting_output=0.0,
         alarm_config=None,
     ):
-        self.Kp = Kp
-        self.Ki = Ki
-        self.Kd = Kd
+        self.Kc = Kc
+        self.Ti = Ti
+        self.Td = Td
         self.setpoint = setpoint
         self.sample_time = sample_time
         self.reverse_acting = reverse_acting
@@ -187,30 +205,46 @@ class PID:
         d_input = pv - (self._last_input if self._last_input is not None else pv)
         d_error = error - (self._last_error if self._last_error is not None else error)
 
-        # Proportional term
+        # --- Coupled (ISA) form: output = Kc * [P + I + D] ---
+
+        # Proportional contribution (before Kc multiplication)
         if not self.proportional_on_measurement:
-            self._proportional = self.Kp * error
+            self._proportional = error
         else:
-            self._proportional -= self.Kp * d_input
+            self._proportional -= d_input
 
-        # Integral term
-        self._integral += self.Ki * error * dt
-        self._integral = _clamp(self._integral, self.output_limits)
+        # Integral contribution: (1/Ti) * ∫error*dt
+        if self.Ti is not None and self.Ti > 0:
+            self._integral += (1.0 / self.Ti) * error * dt
+        # Clamp integral (in output units, so divide by Kc for clamping)
+        # Actually clamp the full output, integral is clamped in output-equivalent units
+        if self.Kc != 0:
+            int_limits = (
+                self._min_output / self.Kc if self._min_output is not None else None,
+                self._max_output / self.Kc if self._max_output is not None else None,
+            )
+            # Handle negative Kc flipping the limits
+            if self.Kc < 0:
+                int_limits = (int_limits[1], int_limits[0])
+            self._integral = _clamp(self._integral, int_limits)
 
-        # Derivative term
-        if self.differential_on_measurement:
-            if dt > 0:
-                self._derivative = -self.Kd * d_input / dt
+        # Derivative contribution: Td * d(error)/dt
+        if self.Td is not None and self.Td > 0:
+            if self.differential_on_measurement:
+                if dt > 0:
+                    self._derivative = -self.Td * d_input / dt
+                else:
+                    self._derivative = 0.0
             else:
-                self._derivative = 0.0
+                if dt > 0:
+                    self._derivative = self.Td * d_error / dt
+                else:
+                    self._derivative = 0.0
         else:
-            if dt > 0:
-                self._derivative = self.Kd * d_error / dt
-            else:
-                self._derivative = 0.0
+            self._derivative = 0.0
 
-        # Compute output
-        output = self._proportional + self._integral + self._derivative
+        # Final output: Kc multiplies all terms
+        output = self.Kc * (self._proportional + self._integral + self._derivative)
         output = _clamp(output, self.output_limits)
 
         # Update state
@@ -249,8 +283,11 @@ class PID:
 
         if old_mode == Mode.MANUAL and new_mode in (Mode.AUTO, Mode.CASCADE):
             # Transitioning from Manual to Auto/Cascade: bumpless transfer
-            # Set integral term to current output so output doesn't jump
-            self._integral = _clamp(self._output, self.output_limits)
+            # Set integral so that Kc * integral = current output
+            if self.Kc != 0:
+                self._integral = self._output / self.Kc
+            else:
+                self._integral = 0.0
             self._bias = self._output
             self._proportional = 0.0
             self._derivative = 0.0
@@ -303,7 +340,10 @@ class PID:
         if self._mode == Mode.MANUAL:
             raise RuntimeError("Bias cannot be written in MANUAL mode")
         self._bias = value
-        self._integral = _clamp(value, self.output_limits)
+        if self.Kc != 0:
+            self._integral = value / self.Kc
+        else:
+            self._integral = 0.0
 
     # --- Remote setpoint (for Cascade mode) ---
 
@@ -344,29 +384,34 @@ class PID:
 
         self._min_output = min_output
         self._max_output = max_output
-        self._integral = _clamp(self._integral, self.output_limits)
         self._last_output = _clamp(self._last_output, self.output_limits)
 
     # --- Inspection properties ---
 
     @property
     def components(self):
-        """The P, I, and D terms from the last computation as a tuple."""
+        """The P, I, and D contributions from the last computation as a tuple.
+
+        These are the raw contributions BEFORE Kc multiplication:
+            (proportional, integral, derivative)
+
+        The final output = Kc * (P + I + D), clamped to output_limits.
+        """
         return self._proportional, self._integral, self._derivative
 
     @property
     def tunings(self):
-        """Current tunings as (Kp, Ki, Kd)."""
-        return self.Kp, self.Ki, self.Kd
+        """Current tunings as (Kc, Ti, Td)."""
+        return self.Kc, self.Ti, self.Td
 
     @tunings.setter
     def tunings(self, tunings):
         """Set PID tunings."""
-        self.Kp, self.Ki, self.Kd = tunings
+        self.Kc, self.Ti, self.Td = tunings
 
     @property
     def pv(self):
-        """Last process variable value (after scaling)."""
+        """Last process variable value."""
         return self._pv if hasattr(self, '_pv') else None
 
     # --- Reset ---
@@ -376,7 +421,6 @@ class PID:
         self._proportional = 0.0
         self._integral = 0.0
         self._derivative = 0.0
-        self._integral = _clamp(self._integral, self.output_limits)
         self._last_time = self.time_fn()
         self._last_output = None
         self._last_input = None
@@ -384,7 +428,7 @@ class PID:
 
     def __repr__(self):
         return (
-            f"PID(Kp={self.Kp}, Ki={self.Ki}, Kd={self.Kd}, "
+            f"PID(Kc={self.Kc}, Ti={self.Ti}, Td={self.Td}, "
             f"setpoint={self.setpoint}, mode={self._mode.value}, "
             f"output={self._output})"
         )
