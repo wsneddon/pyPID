@@ -45,21 +45,27 @@ class PID:
 
     Where:
         Kc = controller gain (dimensionless, affects all terms)
-        Ti = integral time (seconds). Larger Ti = slower integral action.
+        Ti = integral time. Larger Ti = slower integral action.
              Ti=0 or None disables integral action.
-        Td = derivative time (seconds). Larger Td = more derivative action.
+        Td = derivative time. Larger Td = more derivative action.
              Td=0 or None disables derivative action.
+
+    Ti and Td units depend on time_base ('minutes' or 'seconds').
+    Default is 'minutes' to match DCS tuning conventions.
 
     Parameters
     ----------
     Kc : float
         Controller gain. Multiplies all three terms (P, I, D).
     Ti : float or None
-        Integral time in seconds (repeats/second). None or 0 disables integral.
+        Integral time (minutes per repeat by default). None or 0 disables integral.
     Td : float or None
-        Derivative time in seconds. None or 0 disables derivative.
+        Derivative time (minutes by default). None or 0 disables derivative.
     setpoint : float
         Target setpoint for Auto mode.
+    time_base : str
+        Time units for Ti and Td: 'minutes' (default) or 'seconds'.
+        Note: dt (scan time) is always in seconds regardless of time_base.
     sample_time : float or None
         Minimum time between updates in seconds. None = update every call.
     output_limits : tuple of (float or None, float or None)
@@ -85,6 +91,7 @@ class PID:
         Ti=None,
         Td=None,
         setpoint=0.0,
+        time_base='minutes',
         sample_time=0.01,
         output_limits=(None, None),
         reverse_acting=False,
@@ -102,6 +109,12 @@ class PID:
         self.reverse_acting = reverse_acting
         self.proportional_on_measurement = proportional_on_measurement
         self.differential_on_measurement = differential_on_measurement
+
+        # Time base: convert Ti/Td to seconds internally
+        if time_base not in ('minutes', 'seconds'):
+            raise ValueError(f"time_base must be 'minutes' or 'seconds', got {time_base!r}")
+        self.time_base = time_base
+        self._time_factor = 60.0 if time_base == 'minutes' else 1.0
 
         # Alarms
         self.alarm_config = alarm_config
@@ -206,6 +219,8 @@ class PID:
         d_error = error - (self._last_error if self._last_error is not None else error)
 
         # --- Coupled (ISA) form: output = Kc * [P + I + D] ---
+        # dt is always in seconds; convert to time_base units for Ti/Td
+        dt_base = dt / self._time_factor  # dt in minutes (or seconds if time_base='seconds')
 
         # Proportional contribution (before Kc multiplication)
         if not self.proportional_on_measurement:
@@ -215,7 +230,7 @@ class PID:
 
         # Integral contribution: (1/Ti) * ∫error*dt
         if self.Ti is not None and self.Ti > 0:
-            self._integral += (1.0 / self.Ti) * error * dt
+            self._integral += (1.0 / self.Ti) * error * dt_base
         # Clamp integral (in output units, so divide by Kc for clamping)
         # Actually clamp the full output, integral is clamped in output-equivalent units
         if self.Kc != 0:
@@ -231,13 +246,13 @@ class PID:
         # Derivative contribution: Td * d(error)/dt
         if self.Td is not None and self.Td > 0:
             if self.differential_on_measurement:
-                if dt > 0:
-                    self._derivative = -self.Td * d_input / dt
+                if dt_base > 0:
+                    self._derivative = -self.Td * d_input / dt_base
                 else:
                     self._derivative = 0.0
             else:
-                if dt > 0:
-                    self._derivative = self.Td * d_error / dt
+                if dt_base > 0:
+                    self._derivative = self.Td * d_error / dt_base
                 else:
                     self._derivative = 0.0
         else:

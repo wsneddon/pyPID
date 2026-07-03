@@ -13,18 +13,29 @@ class TestBasicPID:
         # error = 10 - 0 = 10, output = Kc * error = 2 * 10 = 20
         assert output == pytest.approx(20.0)
 
-    def test_integral_accumulates(self):
-        # Ti=1.0 means integral contribution = (1/1) * error * dt = error * dt
-        pid = PID(Kc=1.0, Ti=1.0, Td=None, setpoint=10.0, sample_time=None)
+    def test_integral_accumulates_seconds(self):
+        # Ti=1.0 second, time_base='seconds'
+        pid = PID(Kc=1.0, Ti=1.0, Td=None, setpoint=10.0,
+                  sample_time=None, time_base='seconds')
         pid(0.0, dt=1.0)
         # After 1st call: P=10, I=(1/1)*10*1=10, output = 1*(10+10) = 20
         output = pid(0.0, dt=1.0)
         # After 2nd call: P=10, I=10+10=20, output = 1*(10+20) = 30
         assert output == pytest.approx(30.0)
 
+    def test_integral_accumulates_minutes(self):
+        # Ti=1.0 minute (default), dt=60s = 1 minute
+        pid = PID(Kc=1.0, Ti=1.0, Td=None, setpoint=10.0, sample_time=None)
+        pid(0.0, dt=60.0)
+        # After 1st call: dt_base=60/60=1min, P=10, I=(1/1)*10*1=10, output=20
+        output = pid(0.0, dt=60.0)
+        # After 2nd call: P=10, I=10+10=20, output=30
+        assert output == pytest.approx(30.0)
+
     def test_longer_ti_slower_integral(self):
         """Larger Ti = slower integral action."""
-        pid = PID(Kc=1.0, Ti=10.0, Td=None, setpoint=10.0, sample_time=None)
+        pid = PID(Kc=1.0, Ti=10.0, Td=None, setpoint=10.0,
+                  sample_time=None, time_base='seconds')
         pid(0.0, dt=1.0)
         # P=10, I=(1/10)*10*1=1.0, output = 1*(10+1) = 11
         output = pid(0.0, dt=1.0)
@@ -32,18 +43,21 @@ class TestBasicPID:
         assert output == pytest.approx(12.0)
 
     def test_derivative(self):
-        pid = PID(Kc=1.0, Ti=None, Td=1.0, setpoint=10.0, sample_time=None)
+        pid = PID(Kc=1.0, Ti=None, Td=1.0, setpoint=10.0,
+                  sample_time=None, time_base='seconds')
         pid(0.0, dt=1.0)  # first call, d_input = 0
         output = pid(5.0, dt=1.0)
         # P = error = 10-5 = 5
-        # D = -Td * d_input/dt = -1.0 * 5/1.0 = -5
+        # D = -Td * d_input/dt_base = -1.0 * 5/1.0 = -5
         # output = Kc * (P + D) = 1 * (5 + (-5)) = 0
         assert output == pytest.approx(0.0)
 
     def test_gain_couples_all_terms(self):
         """Changing Kc should scale P, I, and D proportionally."""
-        pid1 = PID(Kc=1.0, Ti=1.0, Td=None, setpoint=10.0, sample_time=None)
-        pid2 = PID(Kc=3.0, Ti=1.0, Td=None, setpoint=10.0, sample_time=None)
+        pid1 = PID(Kc=1.0, Ti=1.0, Td=None, setpoint=10.0,
+                   sample_time=None, time_base='seconds')
+        pid2 = PID(Kc=3.0, Ti=1.0, Td=None, setpoint=10.0,
+                   sample_time=None, time_base='seconds')
         out1 = pid1(0.0, dt=1.0)
         out2 = pid2(0.0, dt=1.0)
         # pid1: Kc*(e + I) = 1*(10+10) = 20
@@ -61,7 +75,7 @@ class TestBasicPID:
     def test_anti_windup(self):
         """Integral should not wind up beyond output limits."""
         pid = PID(Kc=1.0, Ti=0.1, Td=None, setpoint=100.0,
-                  output_limits=(0, 50), sample_time=None)
+                  output_limits=(0, 50), sample_time=None, time_base='seconds')
         # Run several cycles to try to wind up
         for _ in range(100):
             pid(0.0, dt=1.0)
@@ -84,6 +98,51 @@ class TestBasicPID:
         pid(5.0, dt=1.0)
         _, _, d = pid.components
         assert d == pytest.approx(0.0)
+
+
+class TestTimeBase:
+    """Test time_base parameter behavior."""
+
+    def test_default_time_base_is_minutes(self):
+        pid = PID(Kc=1.0, Ti=1.0)
+        assert pid.time_base == 'minutes'
+
+    def test_minutes_vs_seconds_integral(self):
+        """Ti=1 minute should give same result as Ti=60 seconds."""
+        pid_min = PID(Kc=1.0, Ti=1.0, Td=None, setpoint=10.0,
+                      sample_time=None, time_base='minutes')
+        pid_sec = PID(Kc=1.0, Ti=60.0, Td=None, setpoint=10.0,
+                      sample_time=None, time_base='seconds')
+        # Same dt in seconds for both
+        out_min = pid_min(0.0, dt=1.0)
+        out_sec = pid_sec(0.0, dt=1.0)
+        assert out_min == pytest.approx(out_sec)
+
+    def test_minutes_vs_seconds_derivative(self):
+        """Td=1 minute should give same result as Td=60 seconds."""
+        pid_min = PID(Kc=1.0, Ti=None, Td=1.0, setpoint=10.0,
+                      sample_time=None, time_base='minutes')
+        pid_sec = PID(Kc=1.0, Ti=None, Td=60.0, setpoint=10.0,
+                      sample_time=None, time_base='seconds')
+        # First call to establish baseline
+        pid_min(0.0, dt=1.0)
+        pid_sec(0.0, dt=1.0)
+        # Second call with PV change
+        out_min = pid_min(5.0, dt=1.0)
+        out_sec = pid_sec(5.0, dt=1.0)
+        assert out_min == pytest.approx(out_sec)
+
+    def test_invalid_time_base_raises(self):
+        with pytest.raises(ValueError):
+            PID(Kc=1.0, time_base='hours')
+
+    def test_minutes_integral_rate(self):
+        """With Ti=1 min and dt=1s, integral adds (1/1)*(error)*(1/60) per scan."""
+        pid = PID(Kc=1.0, Ti=1.0, Td=None, setpoint=10.0, sample_time=None)
+        pid(0.0, dt=1.0)
+        # P=10, I=(1/1)*10*(1/60) = 0.1667, output = 10.1667
+        _, i, _ = pid.components
+        assert i == pytest.approx(10.0 / 60.0, rel=1e-6)
 
 
 class TestReverseActing:
@@ -193,12 +252,13 @@ class TestComponents:
     """Test inspection properties."""
 
     def test_components_tuple(self):
-        pid = PID(Kc=2.0, Ti=1.0, Td=None, setpoint=10.0, sample_time=None)
+        pid = PID(Kc=2.0, Ti=1.0, Td=None, setpoint=10.0,
+                  sample_time=None, time_base='seconds')
         pid(5.0, dt=1.0)
         p, i, d = pid.components
         # P = error = 5
         assert p == pytest.approx(5.0)
-        # I = (1/Ti) * error * dt = (1/1) * 5 * 1 = 5
+        # I = (1/Ti) * error * dt_base = (1/1) * 5 * 1 = 5
         assert i == pytest.approx(5.0)
         # Output = Kc * (P + I) = 2 * (5 + 5) = 20
         assert pid.output == pytest.approx(20.0)
